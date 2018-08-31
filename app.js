@@ -39,6 +39,8 @@ var conn = mysql.createConnection({
 
 ///// 물품 관련 /////
 // 중고 물품 등록
+///// 물품 관련 /////
+// 중고 물품 등록
 app.post('/addThing', upload.array('file'), function(req, res) {
   var title = req.body.title;
   var category = req.body.category;
@@ -54,15 +56,16 @@ app.post('/addThing', upload.array('file'), function(req, res) {
         // s3에 사진정보 추가
         var s3Dir = fileObj.originalname;
 
+        picDir = "https://s3.amazonaws.com/poulshop1/"+urlencode(s3Dir);
         s3.addFile(fileObj.buffer, s3Dir, function(){
-          s3.downloadFile(s3Dir, function(data){
-            count++;
-            picDir += data;
-            console.log(count);
-            if(count == req.files.length){
+          // s3.downloadFile(s3Dir, function(data){
+          //   count++;
+          //   picDir += data;
+          //   console.log(count);
+          //   if(count == req.files.length){
               callback(null);
-            }
-          });
+          //   }
+          // });
         });
       });
     },
@@ -105,12 +108,22 @@ app.post('/addThing', upload.array('file'), function(req, res) {
 app.get('/getThing', function(req, res) {
   var thingId = req.query.thingId;
 
-  var sql = "SELECT * FROM poulshop.thing WHERE id = ?;"
-  conn.query(sql, [thingId], function(err, results) {
+  var sql = "SELECT * FROM poulshop.thing WHERE poulshop.thing.id = ?;"
+  sql += "SELECT poulshop.thing.uuid FROM poulshop.thing WHERE poulshop.thing.id = ?;"
+  conn.query(sql, [thingId, thingId], function(err, results) {
     if (err) {
       console.log(err);
     }
-    res.send(results[0]);
+    var sql = "SELECT * FROM poulshop.transaction WHERE poulshop.transaction.uuid = ?;"
+    conn.query(sql, [results[1][0].uuid], function(err, result) {
+      if (err) {
+        console.log(err);
+      }
+      res.send({
+        thing : results[0][0],
+        trans : result
+      })
+    });
   });
 });
 
@@ -143,8 +156,8 @@ app.get('/search', function(req, res){
         });
     });
   } else if(seller_id){
-    var sql = "SELECT * FROM poulshop.thing WHERE seller_id like ?;"
-    conn.query(sql, [seller_id+ "%"], function(err, results) {
+    var sql = "SELECT poulshop.thing.*, poulshop.user.sellerTier FROM poulshop.thing INNER JOIN poulshop.user ON poulshop.thing.sellerId = poulshop.user.id WHERE sellerId = ?;"
+    conn.query(sql, [seller_id], function(err, results) {
       if (err) {
         console.log(err);
       }
@@ -153,8 +166,8 @@ app.get('/search', function(req, res){
         });
     });
   } else if(buyer_id){
-    var sql = "SELECT * FROM poulshop.thing WHERE buyer_id like ?;"
-    conn.query(sql, [buyer_id+ "%"], function(err, results) {
+    var sql = "SELECT poulshop.thing.*, poulshop.user.buyerTier FROM poulshop.thing INNER JOIN poulshop.user ON poulshop.thing.sellerId = poulshop.user.id WHERE buyerId = ?;"
+    conn.query(sql, [buyer_id], function(err, results) {
       if (err) {
         console.log(err);
       }
@@ -179,24 +192,36 @@ app.get('/recentThing', function(req, res){
 
 ///// 거래 관련 /////
 // 거래 요청
-app.post('/requestTrade', function(req, res){
+app.post('/requestTrade', upload.array('file'), function(req, res){
   var itemId = req.body.itemId;
   var buyerId = req.body.buyerId;
 
-  var newTrade = {
-    itemId: itemId,
-    buyerId: buyerId
-  }
-
-  var sql = "INSERT INTO poulshop.trade SET ?";
-  conn.query(sql, newTrade, function(err, results) {
+  var sql="Select * From poulshop.trade WHERE itemId=? AND buyerId=?;"
+  conn.query(sql, [itemId, buyerId], function(err, results) {
     if (err) {
       console.log(err);
       res.send({"code": "ERROR"})
     } else {
-      res.send({"code": "OK"});
+      if(results.length){
+        console.log(results);
+        res.send({"code": "DUPLICATE"});
+      }else{
+        var sql = "INSERT INTO poulshop.trade VALUES (NULL, ?, ?)";
+        conn.query(sql, [itemId, buyerId], function(err, results) {
+          if (err) {
+            console.log(err);
+            res.send({"code": "ERROR"})
+          } else {
+            console.log(results);
+            res.send({"code": "OK"});
+          }
+        });
+
+      }
+
     }
   });
+
 });
 
 // 거래 요청 목록 출력
@@ -208,7 +233,7 @@ app.get('/listAskTrade', function(req, res){
     if (err) {
       console.log(err);
     }
-    console.log({result: results});
+    res.send({result: results});
   });
 });
 
@@ -217,7 +242,7 @@ app.get('/listTrade', function(req, res){
   var buyerId = req.query.buyerId;
 
   if(sellerId){
-    var sql = "SELECT poulshop.thing.title, poulshop.thing.status FROM poulshop.thing WHERE poulshop.thing.sellerId = ?;"
+    var sql = "SELECT poulshop.thing.title, poulshop.thing.status, poulshop.thing.id FROM poulshop.thing WHERE poulshop.thing.sellerId = ?;"
     conn.query(sql, [sellerId],function(err, results) {
       if (err) {
         console.log(err);
@@ -225,7 +250,7 @@ app.get('/listTrade', function(req, res){
       res.send({result: results});
     });
   } else if(buyerId){
-    var sql = "SELECT poulshop.thing.title, poulshop.thing.status FROM poulshop.thing WHERE poulshop.thing.buyerId = ?;"
+    var sql = "SELECT poulshop.thing.title, poulshop.thing.status, poulshop.thing.id FROM poulshop.thing WHERE poulshop.thing.buyerId = ?;"
     conn.query(sql, [buyerId],function(err, results) {
       if (err) {
         console.log(err);
@@ -239,19 +264,25 @@ app.get('/listTrade', function(req, res){
 })
 
 // 거래 승인
-app.post('/acceptTrade', function(req, res){
+app.post('/acceptTrade', upload.array('file'), function(req, res){
   var itemId = req.body.itemId;
-  var buyerId = req.body.buyerId
+  var buyerId = req.body.buyerId;
+  var sellerId = req.body.sellerId;
 
-  var sql = "UPDATE poulshop.thing SET status = true, buyerId = ? WHERE id = ?"
-  conn.query(sql, [buyerId, itemId], function(err, results) {
-    if (err) {
-      console.log(err);
-      res.send({code: "error"})
-    }
-    console.log(results);
-    res.send({code: "OK"})
-  });
+  getEther(buyerId, sellerId,itemId,function(trans){
+    var sql = "UPDATE poulshop.thing SET status = true, buyerId = ? WHERE id = ?;"
+    sql += "DELETE FROM poulshop.trade WHERE itemId=?;"
+    sql += "INSERT INTO poulshop.transaction SET ?"
+
+    conn.query(sql, [buyerId, itemId, itemId, trans], function(err, results) {
+      if (err) {
+        console.log(err);
+        res.send({code: "error"})
+      }
+      res.send({code: "OK"})
+    });
+  })
+
 });
 
 
@@ -354,6 +385,34 @@ app.get('/bestTier', function(req, res){
     res.send({result: results});
   });
 })
+
+var getEther = function(buyerId, sellerId, itemId, callback){
+  var sellerEther;
+  var buyerEther;
+  var itemUuid;
+
+  var sql = "SELECT poulshop.user.etherAddress FROM poulshop.user WHERE id = ?;"
+  sql += "SELECT poulshop.user.etherAddress FROM poulshop.user WHERE id=?;"
+  sql += "SELECT poulshop.thing.uuid FROM poulshop.thing WHERE id=?;"
+  conn.query(sql, [buyerId, sellerId, itemId], function(err, results) {
+    if (err) {
+      console.log(err);
+    }
+
+    buyerEther = results[0][0].etherAddress;
+    sellerEther = results[1][0].etherAddress;
+    itemUuid = results[2][0].uuid;
+
+    var trans={
+      from: sellerEther,
+      to : buyerEther,
+      uuid:itemUuid
+    }
+
+    callback(trans);
+  });
+}
+
 
 
 http.createServer(app).listen(app.get('port'), function() {
